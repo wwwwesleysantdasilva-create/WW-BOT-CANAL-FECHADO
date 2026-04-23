@@ -7,10 +7,11 @@ const {
     ButtonStyle, 
     RoleSelectMenuBuilder, 
     ChannelSelectMenuBuilder, 
-    ChannelType 
+    ChannelType,
+    REST,
+    Routes
 } = require('discord.js');
 const fs = require('fs');
-const os = require('os');
 
 const client = new Client({
     intents: [
@@ -21,44 +22,51 @@ const client = new Client({
     ]
 });
 
-// --- SISTEMA DE CONFIGURAÇÃO (CHECKUP: OK) ---
 const CONFIG_PATH = './config.json';
 
+// --- DATABASE SIMPLES (JSON) ---
 function loadConfig() {
     if (!fs.existsSync(CONFIG_PATH)) {
         fs.writeFileSync(CONFIG_PATH, JSON.stringify({ staff_roles: [], blocked_channels: [] }, null, 4));
     }
-    try {
-        const data = fs.readFileSync(CONFIG_PATH, 'utf8');
-        return JSON.parse(data);
-    } catch (err) {
-        return { staff_roles: [], blocked_channels: [] };
-    }
+    const data = fs.readFileSync(CONFIG_PATH, 'utf8');
+    return JSON.parse(data);
 }
 
 function saveConfig(config) {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 4));
 }
 
-// --- INICIALIZAÇÃO ---
+// --- REGISTRO DE COMANDOS ---
+const commands = [
+    {
+        name: 'painel',
+        description: 'Abre o painel de controle do bot',
+    },
+];
+
 client.once('ready', async () => {
-    console.log(`✅ Logado com sucesso como ${client.user.tag}`);
+    console.log(`✅ Logado como ${client.user.tag}`);
     
-    // Registra o comando globalmente
-    await client.application.commands.set([
-        {
-            name: 'painel',
-            description: 'Abre o painel administrativo do bot'
-        }
-    ]);
+    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+
+    try {
+        console.log('🔄 Atualizando comandos / (slash)...');
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: commands },
+        );
+        console.log('🚀 Comandos registrados com sucesso!');
+    } catch (error) {
+        console.error('❌ Erro ao registrar comandos:', error);
+    }
 });
 
-// --- LÓGICA DE SEGURANÇA E BLOQUEIO ---
+// --- SISTEMA DE SEGURANÇA (ON MESSAGE) ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
     const config = loadConfig();
-    
     if (config.blocked_channels.includes(message.channel.id)) {
         const isStaff = message.member.roles.cache.some(role => config.staff_roles.includes(role.id));
         const isOwner = message.author.id === message.guild.ownerId;
@@ -66,92 +74,85 @@ client.on('messageCreate', async (message) => {
         if (!isStaff && !isOwner) {
             try {
                 await message.delete();
-                const aviso = await message.channel.send(`${message.author}, isso não é um canal liberado para interação.`);
-                setTimeout(() => aviso.delete().catch(() => {}), 5000);
-            } catch (err) {
-                console.error("Erro ao deletar mensagem:", err.message);
-            }
+                const msg = await message.channel.send(`${message.author}, este canal não permite interações.`);
+                setTimeout(() => msg.delete().catch(() => {}), 5000);
+            } catch (e) {}
         }
     }
 });
 
-// --- INTERAÇÕES (PAINEL E BOTÕES) ---
+// --- TRATAMENTO DE INTERAÇÕES (ON INTERACTION) ---
 client.on('interactionCreate', async (interaction) => {
     const config = loadConfig();
 
-    // Comando Slash /painel
+    // 1. COMANDO SLASH
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'painel') {
             const isStaff = interaction.member.roles.cache.some(role => config.staff_roles.includes(role.id));
             const isOwner = interaction.user.id === interaction.guild.ownerId;
 
             if (!isStaff && !isOwner) {
-                return interaction.reply({ content: "❌ Acesso negado ao painel.", ephemeral: true });
+                return interaction.reply({ content: "❌ Você não tem permissão.", ephemeral: true });
             }
 
             const embed = new EmbedBuilder()
-                .setTitle('🛡️ PAINEL DE CONTROLE CENTRAL')
-                .setDescription('Selecione uma opção abaixo para configurar o servidor.')
-                .setColor(0x2b2d31)
-                .setImage('SUA_URL_DA_FOTO_AQUI'); // <--- COLOQUE SUA FOTO AQUI
+                .setTitle('🛡️ CONFIGURAÇÃO DO BOT')
+                .setDescription('Gerencie as funções administrativas pelos botões abaixo.')
+                .setColor(0x5865F2)
+                .setImage('SUA_URL_DA_FOTO_AQUI'); // Coloque sua foto aqui
 
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
-                    .setCustomId('btn_staff')
-                    .setLabel('Gerenciar Cargos')
-                    .setEmoji('1478558484088885298') 
-                    .setStyle(ButtonStyle.Primary),
+                    .setCustomId('btn_staff_cfg')
+                    .setLabel('Cargos Staff')
+                    .setEmoji('1478558484088885298')
+                    .setStyle(ButtonStyle.Secondary),
                 new ButtonBuilder()
-                    .setCustomId('btn_mod')
+                    .setCustomId('btn_mod_cfg')
                     .setLabel('Moderação')
                     .setEmoji('1478553904848306257')
-                    .setStyle(ButtonStyle.Primary)
+                    .setStyle(ButtonStyle.Secondary)
             );
 
             await interaction.reply({ embeds: [embed], components: [row] });
         }
     }
 
-    // Resposta aos Botões
+    // 2. BOTÕES
     if (interaction.isButton()) {
-        if (interaction.customId === 'btn_staff') {
+        if (interaction.customId === 'btn_staff_cfg') {
             const select = new RoleSelectMenuBuilder()
-                .setCustomId('select_staff')
-                .setPlaceholder('Escolha os cargos que podem usar o bot')
+                .setCustomId('sel_staff')
+                .setPlaceholder('Escolha os cargos permitidos')
                 .setMaxValues(10);
-            
-            const row = new ActionRowBuilder().addComponents(select);
-            await interaction.reply({ content: 'Selecione os cargos Staff:', components: [row], ephemeral: true });
+            await interaction.reply({ components: [new ActionRowBuilder().addComponents(select)], ephemeral: true });
         }
 
-        if (interaction.customId === 'btn_mod') {
+        if (interaction.customId === 'btn_mod_cfg') {
             const select = new ChannelSelectMenuBuilder()
-                .setCustomId('select_chan')
-                .setPlaceholder('Escolha o canal para bloquear/desbloquear')
+                .setCustomId('sel_chan')
+                .setPlaceholder('Escolha o canal para bloquear')
                 .addChannelTypes(ChannelType.GuildText);
-
-            const row = new ActionRowBuilder().addComponents(select);
-            await interaction.reply({ content: 'Gerenciar bloqueio de canais:', components: [row], ephemeral: true });
+            await interaction.reply({ components: [new ActionRowBuilder().addComponents(select)], ephemeral: true });
         }
     }
 
-    // Resposta aos Menus de Seleção
-    if (interaction.isRoleSelectMenu() && interaction.customId === 'select_staff') {
+    // 3. MENUS DE SELEÇÃO
+    if (interaction.isRoleSelectMenu() && interaction.customId === 'sel_staff') {
         config.staff_roles = Array.from(interaction.values);
         saveConfig(config);
-        await interaction.update({ content: '✅ Cargos Staff atualizados com sucesso!', components: [] });
+        await interaction.update({ content: '✅ Cargos Staff atualizados!', components: [] });
     }
 
-    if (interaction.isChannelSelectMenu() && interaction.customId === 'select_chan') {
-        const canalId = interaction.values[0];
-        const index = config.blocked_channels.indexOf(canalId);
-        
-        if (index > -1) {
-            config.blocked_channels.splice(index, 1);
-            await interaction.update({ content: '🔓 Canal **DESBLOQUEADO**!', components: [] });
+    if (interaction.isChannelSelectMenu() && interaction.customId === 'sel_chan') {
+        const id = interaction.values[0];
+        const idx = config.blocked_channels.indexOf(id);
+        if (idx > -1) {
+            config.blocked_channels.splice(idx, 1);
+            await interaction.update({ content: '🔓 Canal Desbloqueado!', components: [] });
         } else {
-            config.blocked_channels.push(canalId);
-            await interaction.update({ content: '🔒 Canal **BLOQUEADO**! (Membros não podem falar)', components: [] });
+            config.blocked_channels.push(id);
+            await interaction.update({ content: '🔒 Canal Bloqueado!', components: [] });
         }
         saveConfig(config);
     }
