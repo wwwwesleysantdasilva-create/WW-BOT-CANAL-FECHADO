@@ -12,10 +12,8 @@ const client = new Client({
     ]
 });
 
-// Configuração em memória (No Railway, isso reseta ao reiniciar)
 let configBot = { canalId: null, cargoExcecao: null };
 
-// 1. Definição do comando /painel
 const commands = [
     new SlashCommandBuilder()
         .setName('painel')
@@ -26,73 +24,65 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 client.once(Events.ClientReady, async (c) => {
     console.log(`✅ Bot online: ${c.user.tag}`);
-    
-    // 2. Registra os comandos no Discord automaticamente
     try {
-        console.log('Atualizando comandos (/) no Discord...');
         await rest.put(
             Routes.applicationCommands(c.user.id),
             { body: commands },
         );
-        console.log('Comandos registrados com sucesso!');
+        console.log('Comandos (/) registrados!');
     } catch (error) {
         console.error(error);
     }
 });
 
-// 3. Ouvindo o comando /painel
 client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'painel') {
             const embed = new EmbedBuilder()
                 .setTitle('⚙️ Painel de Controle')
-                .setDescription('Use os botões abaixo para configurar as funções.')
+                .setDescription('Clique nos botões azuis para configurar o sistema.')
                 .setColor('#0099ff')
-                .setImage('https://sua-foto-aqui.jpg'); // COLOQUE SEU LINK AQUI
+                // Abaixo está o link que você mandou aplicado ao painel:
+                .setImage('https://cdn.discordapp.com/attachments/1496697294769360906/1496753704261652551/34C15481-EB2C-47EA-B44C-C9FAA20E9B68.jpg?ex=69eb0803&is=69e9b683&hm=72adc3c26d7d213a90b7afe68dd8c9901bfbdb363cfa27724c88f060100536bc&');
 
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId('set_canal')
                     .setLabel('Definir Canal')
-                    .setStyle(ButtonStyle.Primary), // Azul
+                    .setStyle(ButtonStyle.Primary),
                 new ButtonBuilder()
                     .setCustomId('set_excecao')
                     .setLabel('Definir Exceção')
-                    .setStyle(ButtonStyle.Primary) // Azul
+                    .setStyle(ButtonStyle.Primary)
             );
 
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
         }
     }
 
-    // 4. Lógica dos Botões
     if (interaction.isButton()) {
         if (interaction.customId === 'set_canal') {
             configBot.canalId = interaction.channelId;
-            await interaction.reply({ content: `✅ Canal <#${interaction.channelId}> configurado!`, ephemeral: true });
+            await interaction.reply({ content: `✅ Canal <#${interaction.channelId}> configurado para apagar mensagens!`, ephemeral: true });
         }
         if (interaction.customId === 'set_excecao') {
             configBot.cargoExcecao = interaction.member.roles.highest.id;
-            await interaction.reply({ content: `✅ Exceção definida para o cargo: **${interaction.member.roles.highest.name}**`, ephemeral: true });
+            await interaction.reply({ content: `✅ Exceção definida para: **${interaction.member.roles.highest.name}**`, ephemeral: true });
         }
     }
 });
 
-// 5. Lógica de apagar mensagens (Interpretador)
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot || !configBot.canalId) return;
 
     if (message.channel.id === configBot.canalId) {
-        // Se NÃO tiver o cargo de exceção
         if (!message.member.roles.cache.has(configBot.cargoExcecao)) {
-            const texto = message.content;
+            const textoOriginal = message.content;
             await message.delete().catch(() => {});
 
-            // Resposta que "Só você pode ler" (Ephemeral)
-            // IMPORTANTE: Mensagens comuns não podem ser efêmeras. 
-            // O bot vai enviar e apagar logo depois para simular.
-            const aviso = await message.channel.send(`⌨️ **${message.author.username}**, comando interpretado: \`${texto}\``);
-            setTimeout(() => aviso.delete().catch(() => {}), 4000);
+            // Resposta simulando o "somente você pode ler" (enviando e apagando)
+            const aviso = await message.channel.send(`⌨️ **${message.author.username}**, comando interpretado: \`${textoOriginal}\``);
+            setTimeout(() => aviso.delete().catch(() => {}), 5000);
         }
     }
 });
