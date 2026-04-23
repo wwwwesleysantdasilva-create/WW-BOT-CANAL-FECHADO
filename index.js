@@ -1,145 +1,149 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
-import json
-import os
+const { 
+    Client, 
+    GatewayIntentBits, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    RoleSelectMenuBuilder, 
+    ChannelSelectMenuBuilder, 
+    ChannelType,
+    ComponentType
+} = require('discord.js');
+const fs = require('fs');
 
-# --- FUNÇÕES DE CONFIGURAÇÃO (JSON) ---
-def load_config():
-    if not os.path.exists('config.json'):
-        with open('config.json', 'w') as f:
-            json.dump({"staff_roles": [], "blocked_channels": []}, f, indent=4)
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
+    ]
+});
+
+// --- FUNÇÕES DE CONFIGURAÇÃO ---
+function loadConfig() {
+    return JSON.parse(fs.readFileSync('./config.json', 'utf8'));
+}
+
+function saveConfig(config) {
+    fs.writeFileSync('./config.json', JSON.stringify(config, null, 4));
+}
+
+// --- INICIALIZAÇÃO ---
+client.once('ready', async () => {
+    console.log(`Logado como ${client.user.tag}`);
+    // Sincronizar comando /painel
+    await client.application.commands.set([
+        {
+            name: 'painel',
+            description: 'Abre o painel de configuração'
+        }
+    ]);
+});
+
+// --- LÓGICA DE BLOQUEIO DE MENSAGENS ---
+client.on('messageCreate', async (message) => {
+    if (message.author.bot || !message.guild) return;
+
+    const config = loadConfig();
     
-    try:
-        with open('config.json', 'r') as f:
-            return json.load(f)
-    except:
-        return {"staff_roles": [], "blocked_channels": []}
+    if (config.blocked_channels.includes(message.channel.id)) {
+        const isStaff = message.member.roles.cache.some(role => config.staff_roles.includes(role.id));
+        const isOwner = message.author.id === message.guild.ownerId;
 
-def save_config(config):
-    with open('config.json', 'w') as f:
-        json.dump(config, f, indent=4)
+        if (!isStaff && !isOwner) {
+            try {
+                await message.delete();
+                const reply = await message.channel.send(`${message.author}, isso não é um canal liberado para interação.`);
+                setTimeout(() => reply.delete().catch(() => {}), 5000);
+            } catch (err) {
+                console.log("Erro ao deletar: ", err.message);
+            }
+        }
+    }
+});
 
-# --- CLASSE DA INTERFACE (BOTÕES E MENUS) ---
-class PainelView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None) # Mantém os botões ativos após reiniciar
+// --- COMANDO /PAINEL E INTERAÇÕES ---
+client.on('interactionCreate', async (interaction) => {
+    const config = loadConfig();
 
-    # BOTÃO 1 - GERENCIAR CARGOS
-    @discord.ui.button(label="Gerenciar Cargos", style=discord.ButtonStyle.blurple, custom_id="btn_staff", emoji="<:emoji_39:1478558484088885298>")
-    async def staff_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        select = discord.ui.RoleSelect(placeholder="Selecione os cargos Staff...", max_values=10)
-        
-        async def select_callback(inter: discord.Interaction):
-            config = load_config()
-            config["staff_roles"] = [role.id for role in select.values]
-            save_config(config)
-            await inter.response.send_message(f"✅ Permissões atualizadas para {len(select.values)} cargo(s)!", ephemeral=True)
+    if (interaction.isChatInputCommand()) {
+        if (interaction.commandName === 'painel') {
+            const isStaff = interaction.member.roles.cache.some(role => config.staff_roles.includes(role.id));
+            const isOwner = interaction.user.id === interaction.guild.ownerId;
 
-        view = discord.ui.View()
-        view.add_item(select)
-        select.callback = select_callback
-        await interaction.response.send_message("Selecione quem pode gerenciar o bot:", view=view, ephemeral=True)
+            if (!isStaff && !isOwner) {
+                return interaction.reply({ content: "❌ Sem permissão.", ephemeral: true });
+            }
 
-    # BOTÃO 2 - MODERAÇÃO (BLOQUEAR CANAL)
-    @discord.ui.button(label="Moderação", style=discord.ButtonStyle.blurple, custom_id="btn_mod", emoji="<:emoji_37:1478553904848306257>")
-    async def mod_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        select = discord.ui.ChannelSelect(
-            placeholder="Selecione o canal para bloquear/desbloquear...",
-            channel_types=[discord.ChannelType.text]
-        )
+            const embed = new EmbedBuilder()
+                .setTitle('🛡️ PAINEL DE CONTROLE')
+                .setDescription('Gerencie staff e canais bloqueados.')
+                .setColor(0x3498db)
+                .setImage('SUA_URL_DA_FOTO_AQUI'); // Coloque sua foto aqui
 
-        async def channel_callback(inter: discord.Interaction):
-            config = load_config()
-            canal_id = select.values[0].id
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('btn_staff')
+                    .setLabel('Gerenciar Cargos')
+                    .setEmoji('1478558484088885298') // ID do seu emoji
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('btn_mod')
+                    .setLabel('Moderação')
+                    .setEmoji('1478553904848306257') // ID do seu emoji
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+            await interaction.reply({ embeds: [embed], components: [row] });
+        }
+    }
+
+    // Lógica dos Botões e Menus
+    if (interaction.isButton()) {
+        if (interaction.customId === 'btn_staff') {
+            const select = new RoleSelectMenuBuilder()
+                .setCustomId('select_staff')
+                .setPlaceholder('Escolha os cargos Staff')
+                .setMaxValues(10);
             
-            if canal_id in config["blocked_channels"]:
-                config["blocked_channels"].remove(canal_id)
-                status = "🔓 Canal DESBLOQUEADO!"
-            else:
-                config["blocked_channels"].append(canal_id)
-                status = "🔒 Canal BLOQUEADO! (Apenas Staff pode falar)"
+            await interaction.reply({ components: [new ActionRowBuilder().addComponents(select)], ephemeral: true });
+        }
+
+        if (interaction.customId === 'btn_mod') {
+            const select = new ChannelSelectMenuBuilder()
+                .setCustomId('select_chan')
+                .setPlaceholder('Escolha o canal para bloquear')
+                .addChannelTypes(ChannelType.GuildText);
+
+            await interaction.reply({ components: [new ActionRowBuilder().addComponents(select)], ephemeral: true });
+        }
+    }
+
+    if (interaction.isRoleSelectMenu()) {
+        if (interaction.customId === 'select_staff') {
+            config.staff_roles = Array.from(interaction.values);
+            saveConfig(config);
+            await interaction.update({ content: '✅ Cargos Staff salvos!', components: [] });
+        }
+    }
+
+    if (interaction.isChannelSelectMenu()) {
+        if (interaction.customId === 'select_chan') {
+            const canalId = interaction.values[0];
+            const index = config.blocked_channels.indexOf(canalId);
             
-            save_config(config)
-            await inter.response.send_message(status, ephemeral=True)
+            if (index > -1) {
+                config.blocked_channels.splice(index, 1);
+                await interaction.update({ content: '🔓 Canal Desbloqueado!', components: [] });
+            } else {
+                config.blocked_channels.push(canalId);
+                await interaction.update({ content: '🔒 Canal Bloqueado!', components: [] });
+            }
+            saveConfig(config);
+        }
+    }
+});
 
-        view = discord.ui.View()
-        view.add_item(select)
-        select.callback = channel_callback
-        await interaction.response.send_message("Gerenciamento de canais de interação:", view=view, ephemeral=True)
-
-# --- CLASSE PRINCIPAL DO BOT ---
-class MyBot(commands.Bot):
-    def __init__(self):
-        intents = discord.Intents.default()
-        intents.message_content = True
-        intents.members = True
-        super().__init__(command_prefix="!", intents=intents)
-
-    async def setup_hook(self):
-        # Registra a View persistente para que os botões funcionem após o bot reiniciar
-        self.add_view(PainelView())
-        await self.tree.sync()
-        print(f"Comandos sincronizados e View ativa.")
-
-bot = MyBot()
-
-# --- EVENTOS ---
-@bot.event
-async def on_ready():
-    print(f'Logado como {bot.user} (ID: {bot.user.id})')
-
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-
-    config = load_config()
-    
-    # Lógica de bloqueio de canal
-    if message.channel.id in config["blocked_channels"]:
-        user_roles = [role.id for role in message.author.roles]
-        is_staff = any(role_id in config["staff_roles"] for role_id in user_roles)
-        is_owner = message.author.id == message.guild.owner_id
-
-        if not is_staff and not is_owner:
-            try:
-                await message.delete()
-                # Envia mensagem que some em 5 segundos
-                await message.channel.send(f"❌ {message.author.mention}, isso não é um canal liberado para interação.", delete_after=5)
-            except:
-                pass
-    
-    await bot.process_commands(message)
-
-# --- COMANDO SLASH /PAINEL ---
-@bot.tree.command(name="painel", description="Abre o painel de configuração")
-async def painel(interaction: discord.Interaction):
-    config = load_config()
-    
-    # Segurança: Apenas dono ou staff configurada
-    user_roles = [role.id for role in interaction.user.roles]
-    is_staff = any(role_id in config["staff_roles"] for role_id in user_roles)
-    is_owner = interaction.user.id == interaction.guild.owner_id
-
-    if not is_staff and not is_owner:
-        await interaction.response.send_message("🚫 Acesso negado ao painel.", ephemeral=True)
-        return
-
-    embed = discord.Embed(
-        title="PAINEL DE CONTROLE",
-        description="Gerencie as permissões e canais bloqueados pelos botões abaixo.",
-        color=0x2b2d31
-    )
-    # Substitua pelo link da sua foto fixa:
-    embed.set_image(url="https://sua-imagem.png")
-    
-    await interaction.response.send_message(embed=embed, view=PainelView())
-
-# --- INICIALIZAÇÃO NO RAILWAY ---
-if __name__ == "__main__":
-    TOKEN = os.getenv("TOKEN") # Railway busca aqui
-    if TOKEN:
-        bot.run(TOKEN)
-    else:
-        print("ERRO: Variável de ambiente 'TOKEN' não encontrada!")
+client.login(process.env.TOKEN);
